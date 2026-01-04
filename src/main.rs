@@ -1,18 +1,17 @@
 mod emulator;
-mod canvas;
-use std::process::exit;
-
-use sdl2::pixels::Color;
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use std::time::Duration;
-
+mod key2btn;
 use crate::emulator::Emulator;
 
+use std::process::exit;
+use std::time::Duration;
+
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::Color;
 fn main() {
     let mut emulator = Emulator::new();
 
-    if let Err(rom) = emulator.load_rom("./alago") {
+    if let Err(rom) = emulator.load_rom("./roms/alago") {
         println!("{rom}");
         exit(1);
     }
@@ -44,6 +43,22 @@ fn main() {
                 } => {
                     break 'running;
                 }
+
+                Event::KeyDown {
+                    keycode: Some(key), ..
+                } => {
+                    if let Some(btn) = key2btn::key2btn(key) {
+                        emulator.set_btn_press(btn, true);
+                    }
+                }
+
+                Event::KeyUp {
+                    keycode: Some(key), ..
+                } => {
+                    if let Some(btn) = key2btn::key2btn(key) {
+                        emulator.set_btn_press(btn, false);
+                    }
+                }
                 _ => {}
             }
         }
@@ -51,5 +66,30 @@ fn main() {
         // FDC cycle
 
         std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    }
+}
+
+#[test]
+fn verify_display_update() {
+    let mut emul = Emulator::new();
+
+    emul.execute_instruction(0xA05F);
+    emul.execute_instruction(0x603F);
+    emul.execute_instruction(0x611F);
+    emul.execute_instruction(0xD105);
+
+    display_it(&emul.display);
+}
+
+fn display_it(display: &[[bool; 64]; 32]) {
+    for line in display {
+        for cell in line {
+            if *cell {
+                print!("O");
+            } else {
+                print!("-");
+            }
+        }
+        println!("");
     }
 }
