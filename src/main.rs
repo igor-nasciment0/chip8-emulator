@@ -14,12 +14,23 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 
-fn main() {
-    let mut emulator = Emulator::new();
 
-    if let Err(rom) = emulator.load_rom("./roms/pong.ch8") {
-        println!("{rom}");
-        exit(1);
+
+fn main() {
+    println!("Insert a ROM's filename (e.g., pong.ch8): ");
+    let mut filename: String = String::from("./roms/");
+
+    if let Err(err) = std::io::stdin().read_line(&mut filename) {
+        print!("{err}");
+        exit(1)
+    }
+
+    println!("Loading ROM: {filename}");
+
+    let mut emulator = Emulator::new();
+    if let Err(err) = emulator.load_rom(filename.trim()) {
+        println!("{err}");
+        exit(2);
     }
 
     let sdl_context = sdl2::init().unwrap();
