@@ -1,11 +1,13 @@
+mod audio;
 mod emulator;
 mod key2btn;
+use crate::audio::SquareWave;
 use crate::emulator::Emulator;
-use crate::emulator::consts::{SCREEN_WIDTH, SCREEN_HEIGHT};
+use crate::emulator::consts::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use std::process::exit;
-use std::time::Duration;
 
+use sdl2::audio::{AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
@@ -15,13 +17,14 @@ use sdl2::render::Canvas;
 fn main() {
     let mut emulator = Emulator::new();
 
-    if let Err(rom) = emulator.load_rom("./roms/6-keypad.ch8") {
+    if let Err(rom) = emulator.load_rom("./roms/pong.ch8") {
         println!("{rom}");
         exit(1);
     }
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+    let audio_subsystem = sdl_context.audio().unwrap();
 
     let window = video_subsystem
         .window(
@@ -39,6 +42,23 @@ fn main() {
     canvas.set_draw_color(Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.present();
+
+    let audio_spec = AudioSpecDesired {
+        freq: Some(44000),
+        channels: Some(2),
+        samples: Some(1024),
+    };
+
+    let audio_device  = audio_subsystem
+        .open_playback(None, &audio_spec, |spec| {
+            // initialize the audio callback
+            SquareWave {
+                phase_inc: 150.0 / spec.freq as f32,
+                phase: 0.0,
+                volume: 0.05,
+            }
+        })
+        .unwrap();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     const INSTRUCTIONS_PER_FRAME: usize = 20;
@@ -83,7 +103,7 @@ fn main() {
             }
         }
 
-        emulator.tick_timers();
+        emulator.tick_timers(&audio_device);
 
         draw_on_canvas(&mut canvas, &emulator.display);
         canvas.present();
@@ -91,7 +111,10 @@ fn main() {
     }
 }
 
-fn draw_on_canvas(canvas: &mut Canvas<sdl2::video::Window>, display: &[[bool; SCREEN_WIDTH]; SCREEN_HEIGHT]) {
+fn draw_on_canvas(
+    canvas: &mut Canvas<sdl2::video::Window>,
+    display: &[[bool; SCREEN_WIDTH]; SCREEN_HEIGHT],
+) {
     for (y, line) in display.iter().enumerate() {
         for (x, pixel) in line.iter().enumerate() {
             if *pixel {

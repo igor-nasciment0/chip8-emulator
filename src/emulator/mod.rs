@@ -3,9 +3,9 @@ pub mod consts;
 use rand::Rng;
 use std::{cmp::min, error::Error, fs};
 
-use crate::emulator::consts::{
+use crate::{audio::AudioDeviceControl, emulator::consts::{
     FONTSET, FONTSET_START_ADDRESS, NUM_BITS_IN_BYTE, SCREEN_HEIGHT, SCREEN_WIDTH,
-};
+}};
 
 pub struct Emulator {
     memory: [u8; 4096],
@@ -259,7 +259,7 @@ impl Emulator {
                 } else {
                     for (i, is_btn_pressed) in self.btn_pressings.iter().enumerate() {
                         if *is_btn_pressed {
-                            self.btn_waiting_for_release = Some(i as u8); 
+                            self.btn_waiting_for_release = Some(i as u8);
                         }
                     }
                 }
@@ -367,16 +367,16 @@ impl Emulator {
         self.v_registers[0xF] = if must_activate_vf { 1 } else { 0 };
     }
 
-    pub fn tick_timers(&mut self) {
+    pub fn tick_timers<T: AudioDeviceControl>(&mut self, audio_device: &T) {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
 
         if self.sound_timer > 0 {
-            if self.sound_timer == 1 {
-                println!("BEEP!");
-            }
+            audio_device.resume();
             self.sound_timer -= 1;
+        } else {
+            audio_device.pause();
         }
     }
 }
