@@ -1,3 +1,7 @@
+pub const SCREEN_WIDTH: usize = 64;
+pub const SCREEN_HEIGHT: usize = 32;
+pub const NUM_BITS_IN_BYTE: usize = 8;
+
 pub const FONTSET_SIZE: usize = 80;
 pub const FONTSET_START_ADDRESS: usize = 0x50;
 

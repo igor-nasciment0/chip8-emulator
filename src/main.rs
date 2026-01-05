@@ -1,6 +1,7 @@
 mod emulator;
 mod key2btn;
 use crate::emulator::Emulator;
+use crate::emulator::consts::{SCREEN_WIDTH, SCREEN_HEIGHT};
 
 use std::process::exit;
 use std::time::Duration;
@@ -8,10 +9,13 @@ use std::time::Duration;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+use sdl2::render::Canvas;
+
 fn main() {
     let mut emulator = Emulator::new();
 
-    if let Err(rom) = emulator.load_rom("./roms/alago") {
+    if let Err(rom) = emulator.load_rom("./roms/6-keypad.ch8") {
         println!("{rom}");
         exit(1);
     }
@@ -20,18 +24,24 @@ fn main() {
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("Chip-8 Emulator", 640, 320)
+        .window(
+            "Chip-8 Emulator",
+            SCREEN_WIDTH as u32 * 10,
+            SCREEN_HEIGHT as u32 * 10,
+        )
         .position_centered()
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
+    let mut canvas: Canvas<sdl2::video::Window> =
+        window.into_canvas().present_vsync().build().unwrap();
 
     canvas.set_draw_color(Color::RGB(0, 0, 0));
     canvas.clear();
     canvas.present();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
+    const INSTRUCTIONS_PER_FRAME: usize = 20;
 
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -63,33 +73,34 @@ fn main() {
             }
         }
 
-        // FDC cycle
+        // Fetch, Decode, Execute Cycle
 
-        std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        for _ in 0..INSTRUCTIONS_PER_FRAME {
+            emulator.execution_cycle();
+
+            if emulator.draw_flag {
+                break;
+            }
+        }
+
+        emulator.tick_timers();
+
+        draw_on_canvas(&mut canvas, &emulator.display);
+        canvas.present();
+        emulator.draw_flag = false;
     }
 }
 
-#[test]
-fn verify_display_update() {
-    let mut emul = Emulator::new();
-
-    emul.execute_instruction(0xA05F);
-    emul.execute_instruction(0x603F);
-    emul.execute_instruction(0x611F);
-    emul.execute_instruction(0xD105);
-
-    display_it(&emul.display);
-}
-
-fn display_it(display: &[[bool; 64]; 32]) {
-    for line in display {
-        for cell in line {
-            if *cell {
-                print!("O");
+fn draw_on_canvas(canvas: &mut Canvas<sdl2::video::Window>, display: &[[bool; SCREEN_WIDTH]; SCREEN_HEIGHT]) {
+    for (y, line) in display.iter().enumerate() {
+        for (x, pixel) in line.iter().enumerate() {
+            if *pixel {
+                canvas.set_draw_color(Color::RGB(255, 255, 255));
             } else {
-                print!("-");
+                canvas.set_draw_color(Color::RGB(0, 0, 0));
             }
+
+            let _ = canvas.fill_rect(Rect::new(x as i32 * 10, y as i32 * 10, 10, 10));
         }
-        println!("");
     }
 }

@@ -1,9 +1,11 @@
-mod fontset;
+pub mod consts;
 
 use rand::Rng;
-use std::{error::Error, fs};
+use std::{cmp::min, error::Error, fs};
 
-use crate::emulator::fontset::{FONTSET, FONTSET_START_ADDRESS};
+use crate::emulator::consts::{
+    FONTSET, FONTSET_START_ADDRESS, NUM_BITS_IN_BYTE, SCREEN_HEIGHT, SCREEN_WIDTH,
+};
 
 pub struct Emulator {
     memory: [u8; 4096],
@@ -11,10 +13,12 @@ pub struct Emulator {
     index_register: u16,
     pc: u16,
     stack: Vec<u16>,
-    pub display: [[bool; 64]; 32], // Representação dos pixels
     delay_timer: u8,
     sound_timer: u8,
     btn_pressings: [bool; 16],
+    btn_waiting_for_release: Option<u8>,
+    pub display: [[bool; SCREEN_WIDTH]; SCREEN_HEIGHT],
+    pub draw_flag: bool,
 }
 
 impl Emulator {
@@ -25,14 +29,16 @@ impl Emulator {
             index_register: 0,
             pc: 0x200,
             stack: vec![],
-            display: [[false; 64]; 32],
             delay_timer: 0,
             sound_timer: 0,
             btn_pressings: [false; 16],
+            display: [[false; SCREEN_WIDTH]; SCREEN_HEIGHT],
+            draw_flag: false,
+            btn_waiting_for_release: None,
         };
 
-        emu.memory[fontset::FONTSET_START_ADDRESS
-            ..(fontset::FONTSET_START_ADDRESS + fontset::FONTSET_SIZE)]
+        emu.memory
+            [consts::FONTSET_START_ADDRESS..(consts::FONTSET_START_ADDRESS + consts::FONTSET_SIZE)]
             .copy_from_slice(&FONTSET);
 
         emu
@@ -42,7 +48,7 @@ impl Emulator {
         let binary = fs::read(path)?;
         let ram_starting_index: u16 = 0x200;
 
-        if binary.len() > (64 * 32) - 0x200 {
+        if binary.len() > 4096 - 0x200 {
             return Err("Binário grande demais para a memória".into());
         }
 
@@ -58,6 +64,13 @@ impl Emulator {
         }
     }
 
+    pub fn execution_cycle(&mut self) {
+        let instruction: u16 = ((self.memory[self.pc as usize] as u16) << 8)
+            | (self.memory[self.pc as usize + 1] as u16);
+        self.pc += 2;
+        self.execute_instruction(instruction);
+    }
+
     pub fn execute_instruction(&mut self, instruction: u16) {
         let nibble1: u16 = (instruction & 0xF000) >> 12;
         let nibble2: u16 = (instruction & 0x0F00) >> 8;
@@ -71,7 +84,7 @@ impl Emulator {
             (0, 0, 0xE, 0) => {
                 // 00E0:
                 // Clears display.
-                self.display.fill([false; 64]);
+                self.display.fill([false; SCREEN_WIDTH]);
             }
             (0, 0, 0xE, 0xE) => {
                 // 00EE:
@@ -125,7 +138,8 @@ impl Emulator {
             (7, _, _, _) => {
                 // 7xkk:
                 // Adds the value kk to the value of register Vx, then stores the result in Vx.
-                self.v_registers[nibble2 as usize] += byte_argument;
+                self.v_registers[nibble2 as usize] =
+                    self.v_registers[nibble2 as usize].wrapping_add(byte_argument);
             }
             (8, _, _, _) => {
                 // 8xy*:
@@ -137,31 +151,40 @@ impl Emulator {
 
                 match nibble4 {
                     0 => self.v_registers[x] = vy_value,
-                    1 => self.v_registers[x] = vx_value | vy_value,
-                    2 => self.v_registers[x] = vx_value & vy_value,
-                    3 => self.v_registers[x] = vx_value ^ vy_value,
+                    1 => {
+                        self.v_registers[x] = vx_value | vy_value;
+                        self.v_registers[0xF] = 0
+                    }
+                    2 => {
+                        self.v_registers[x] = vx_value & vy_value;
+                        self.v_registers[0xF] = 0
+                    }
+                    3 => {
+                        self.v_registers[x] = vx_value ^ vy_value;
+                        self.v_registers[0xF] = 0
+                    }
                     4 => {
                         let (sum, overflow) = vx_value.overflowing_add(vy_value);
-                        self.v_registers[0xF] = if overflow { 1 } else { 0 };
                         self.v_registers[x] = sum;
+                        self.v_registers[0xF] = if overflow { 1 } else { 0 };
                     }
                     5 => {
                         let (diff, overflow) = vx_value.overflowing_sub(vy_value);
-                        self.v_registers[0xF] = if overflow { 0 } else { 1 };
                         self.v_registers[x] = diff;
+                        self.v_registers[0xF] = if overflow { 0 } else { 1 };
                     }
                     6 => {
+                        self.v_registers[x] = vy_value >> 1;
                         self.v_registers[0xF] = vx_value & 1;
-                        self.v_registers[x] = vx_value >> 1;
                     }
                     7 => {
                         let (diff, overflow) = vy_value.overflowing_sub(vx_value);
-                        self.v_registers[0xF] = if overflow { 0 } else { 1 };
                         self.v_registers[x] = diff;
+                        self.v_registers[0xF] = if overflow { 0 } else { 1 };
                     }
                     0xE => {
-                        self.v_registers[0xF] = vx_value & 0x80;
-                        self.v_registers[x] = vx_value << 1;
+                        self.v_registers[x] = vy_value << 1;
+                        self.v_registers[0xF] = if (vx_value & 0x80) == 0x80 { 1 } else { 0 };
                     }
                     _ => panic!("Invalid instruction: 8xy{nibble4}"),
                 }
@@ -197,6 +220,7 @@ impl Emulator {
             (0xD, _, _, _) => {
                 // Dxyn:
                 // Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
+                self.draw_flag = true;
                 self.update_sprite(nibble4 as usize, nibble2 as usize, nibble3 as usize);
             }
             (0xE, _, 0x9, 0xE) => {
@@ -226,10 +250,17 @@ impl Emulator {
 
                 let mut pressed = false;
 
-                for (i, is_btn_pressed) in self.btn_pressings.iter().enumerate() {
-                    if *is_btn_pressed {
+                if let Some(btn) = self.btn_waiting_for_release {
+                    if !self.btn_pressings[btn as usize] {
                         pressed = true;
-                        self.v_registers[nibble2 as usize] = i as u8;
+                        self.v_registers[nibble2 as usize] = btn;
+                        self.btn_waiting_for_release = None;
+                    }
+                } else {
+                    for (i, is_btn_pressed) in self.btn_pressings.iter().enumerate() {
+                        if *is_btn_pressed {
+                            self.btn_waiting_for_release = Some(i as u8); 
+                        }
                     }
                 }
 
@@ -278,19 +309,23 @@ impl Emulator {
             (0xF, _, 0x5, 0x5) => {
                 // Fx55
                 // Store registers V0 through Vx in memory starting at location I.
-                let vx = self.v_registers[nibble2 as usize];
+                let x = nibble2;
                 self.memory
-                    [(self.index_register as usize)..(self.index_register as usize + vx as usize)]
-                    .copy_from_slice(&self.v_registers[0..(nibble2 as usize)]);
+                    [(self.index_register as usize)..=(self.index_register as usize + x as usize)]
+                    .copy_from_slice(&self.v_registers[0..=(x as usize)]);
+
+                self.index_register += x + 1;
             }
             (0xF, _, 0x6, 0x5) => {
                 // Fx65
                 // Read registers V0 through Vx from memory starting at location I.
-                let vx = self.v_registers[nibble2 as usize];
-                self.v_registers[0..(nibble2 as usize)].copy_from_slice(
+                let x = nibble2;
+                self.v_registers[0..=(x as usize)].copy_from_slice(
                     &self.memory[(self.index_register as usize)
-                        ..(self.index_register as usize + vx as usize)],
+                        ..=(self.index_register as usize + x as usize)],
                 );
+
+                self.index_register += x + 1;
             }
             _ => return,
         }
@@ -300,20 +335,25 @@ impl Emulator {
         let sprite = &self.memory[(self.index_register as usize)
             ..((self.index_register + sprite_height as u16) as usize)];
 
-        let vx = self.v_registers[x as usize] as usize;
-        let vy = self.v_registers[y as usize] as usize;
+        let starting_x = (self.v_registers[x as usize] as usize) % SCREEN_WIDTH;
+        let starting_y = (self.v_registers[y as usize] as usize) % SCREEN_HEIGHT;
 
         let mut must_activate_vf = false;
 
-        for i in 0..sprite_height {
-            let display_line = &mut self.display[Self::sprite_wrapping_add(vx, i, 32)];
+        let vertical_limit = min(sprite_height, SCREEN_HEIGHT - starting_y);
+        let horizontal_limit = min(NUM_BITS_IN_BYTE, SCREEN_WIDTH - starting_x);
+
+        for i in 0..vertical_limit {
+            // first, we choose the **line** with *starting_y*
+            let display_line = &mut self.display[starting_y + i];
             let sprite_line = sprite[i];
 
-            for j in 0..8 {
-                let bit = 2_u8.pow(7 - j) & sprite_line;
+            for j in 0..horizontal_limit {
+                let bit = 2_u8.pow((NUM_BITS_IN_BYTE - j) as u32 - 1) & sprite_line;
 
                 if bit != 0 {
-                    let line_index = Self::sprite_wrapping_add(vy, j as usize, 64);
+                    // then, we choose the **column** with *starting_x*
+                    let line_index = starting_x + j;
 
                     if display_line[line_index] {
                         must_activate_vf = true;
@@ -327,7 +367,16 @@ impl Emulator {
         self.v_registers[0xF] = if must_activate_vf { 1 } else { 0 };
     }
 
-    fn sprite_wrapping_add(starting: usize, addend: usize, modulus: usize) -> usize {
-        (starting + addend) % modulus
+    pub fn tick_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            if self.sound_timer == 1 {
+                println!("BEEP!");
+            }
+            self.sound_timer -= 1;
+        }
     }
 }
