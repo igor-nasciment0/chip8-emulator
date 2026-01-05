@@ -17,11 +17,11 @@ To try out the emulator, simply run ```cargo run``` at the root directory. The p
 To emulate the original 16-keys keyboard of Chip-8 consoles, the modern keyboard input is "translated" as follows:
 
 <div align="center">
-Chip <====> Modern
+Chip-8 <====> Modern
 
-| 1 | 2 | 3 | C |         | 1  | 2   | 3 | 4 |
-|---|---|---|---|---------|----|-----|---|---|
-| 4 | 5 | 6 | D | <-----> | Q  | W   | E | R |
-| 7 | 8 | 9 | E |         | A  | S   | D | F |
-| A | 0 | B | F |         | Z  | X   | C | V |
+| 1 | 2 | 3 | C |        | 1  | 2   | 3 | 4 |
+|---|---|---|---|--------|----|-----|---|---|
+| 4 | 5 | 6 | D | <====> | Q  | W   | E | R |
+| 7 | 8 | 9 | E |        | A  | S   | D | F |
+| A | 0 | B | F |        | Z  | X   | C | V |
 </div>
